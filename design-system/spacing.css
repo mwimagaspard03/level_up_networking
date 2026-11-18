@@ -1,0 +1,13 @@
+:root {
+  --nl-space-1: 0.25rem;
+  --nl-space-2: 0.5rem;
+  --nl-space-3: 0.75rem;
+  --nl-space-4: 1rem;
+  --nl-space-6: 1.5rem;
+  --nl-space-8: 2rem;
+  --nl-space-12: 3rem;
+  --nl-radius-sm: 0.75rem;
+  --nl-radius-md: 1.15rem;
+  --nl-radius-lg: 1.6rem;
+  --nl-content-width: 1160px;
+}
