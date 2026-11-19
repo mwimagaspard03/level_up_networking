@@ -1,0 +1,5 @@
+:root {
+  --nl-font-heading: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --nl-font-body: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --nl-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}

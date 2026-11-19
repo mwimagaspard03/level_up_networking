@@ -1,0 +1,12 @@
+:root {
+  --nl-bg: #0b1220;
+  --nl-surface: #14243b;
+  --nl-surface-raised: #192d49;
+  --nl-gold: #d7ae5b;
+  --nl-blue: #3286d9;
+  --nl-ice: #f1f5fa;
+  --nl-steel: #94a3b8;
+  --nl-border: rgb(148 163 184 / 18%);
+  --nl-glow-blue: rgb(50 134 217 / 24%);
+  --nl-glow-gold: rgb(215 174 91 / 16%);
+}
