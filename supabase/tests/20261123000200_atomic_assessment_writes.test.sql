@@ -4,6 +4,7 @@
 -- 20261121000100_authentication_v1.sql (Auth V1)
 -- 20261123000100_learning_experience_v1.sql (Learning Experience V1)
 -- 20261123000200_atomic_assessment_writes.sql (Atomic Assessment Writes V2)
+-- 20261124000100_student_assessment_security.sql (Student Assessment Security)
 -- Run only in a disposable local Supabase/PGlite-compatible database.
 -- The test transaction, fixtures and temporary validator stub are rolled back.
 BEGIN;
@@ -320,6 +321,21 @@ SELECT extensions.is(
   0,
   'failed creation leaves no assessment row');
 
+SELECT extensions.lives_ok(
+  $$SELECT public.save_assessment_definition(
+    NULL::uuid,
+    '42000000-0000-4000-8000-000000000100'::uuid,
+    NULL::uuid,
+    'Published choice assessment', '',
+    '[{"id":"q1","prompt":"Choose one","type":"single_choice","options":[{"id":"o1","text":"First"},{"id":"o2","text":"Second"}]}]'::jsonb,
+    'published'::public.course_status, '{"q1":"o1"}'::jsonb
+  )$$,
+  'ADMIN can publish a single-choice assessment');
+SELECT pg_catalog.set_config(
+  'test.published_choice_assessment_id',
+  (SELECT id::text FROM public.assessments WHERE title = 'Published choice assessment'),
+  true);
+
 RESET ROLE;
 SET LOCAL ROLE authenticated;
 SET LOCAL "request.jwt.claim.sub" = '42000000-0000-4000-8000-000000000002';
@@ -335,6 +351,30 @@ SELECT extensions.lives_ok(
     SELECT id, auth.uid(), '{"q1":"Student answer"}'::jsonb
     FROM public.assessments WHERE title = 'Updated assessment'$$,
   'STUDENT can submit their own answer for a published assessment');
+SELECT extensions.throws_ok(
+  $$INSERT INTO public.assessment_attempts (assessment_id, user_id, answers)
+    SELECT id, auth.uid(), '{"q1":"Answer","unexpected":"Extra"}'::jsonb
+    FROM public.assessments WHERE title = 'Updated assessment'$$,
+  '22023', NULL,
+  'direct Data API insert rejects answer keys that do not match question identifiers');
+SELECT extensions.throws_ok(
+  $$INSERT INTO public.assessment_attempts (assessment_id, user_id, answers)
+    SELECT id, auth.uid(), '{"q1":42}'::jsonb
+    FROM public.assessments WHERE title = 'Updated assessment'$$,
+  '22023', NULL,
+  'direct Data API insert rejects non-string student answers');
+SELECT extensions.throws_ok(
+  $$INSERT INTO public.assessment_attempts (assessment_id, user_id, answers)
+    SELECT id, auth.uid(), pg_catalog.jsonb_build_object('q1', pg_catalog.repeat('x', 1001))
+    FROM public.assessments WHERE title = 'Updated assessment'$$,
+  '22023', NULL,
+  'direct Data API insert enforces the student answer length limit');
+SELECT extensions.throws_ok(
+  $$INSERT INTO public.assessment_attempts (assessment_id, user_id, answers)
+    VALUES (pg_catalog.current_setting('test.published_choice_assessment_id')::uuid,
+            auth.uid(), '{"q1":"not-an-option"}'::jsonb)$$,
+  '22023', NULL,
+  'direct Data API insert rejects a single-choice answer that is not an option identifier');
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.assessment_attempts WHERE user_id = auth.uid()),
   1, 'STUDENT can read their own attempt');
@@ -361,6 +401,37 @@ SELECT extensions.throws_ok(
     'draft'::public.course_status, '{"q1":"Expected"}'::jsonb
   )$$,
   '42501', NULL, 'STUDENT cannot create or edit assessments');
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SET LOCAL "request.jwt.claim.sub" = '42000000-0000-4000-8000-000000000001';
+SET LOCAL "request.jwt.claims" = '{"sub":"42000000-0000-4000-8000-000000000001","role":"authenticated"}';
+UPDATE public.courses
+SET status = 'draft'::public.course_status
+WHERE id = '42000000-0000-4000-8000-000000000100';
+RESET ROLE;
+SELECT extensions.is(
+  (SELECT status::text FROM public.courses
+   WHERE id = '42000000-0000-4000-8000-000000000100'),
+  'draft', 'test ADMIN successfully unpublished the parent course');
+
+SET LOCAL ROLE authenticated;
+SET LOCAL "request.jwt.claim.sub" = '42000000-0000-4000-8000-000000000002';
+SET LOCAL "request.jwt.claims" = '{"sub":"42000000-0000-4000-8000-000000000002","role":"authenticated"}';
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.assessments
+   WHERE title IN ('Updated assessment', 'Published choice assessment')),
+  0, 'STUDENT cannot read assessments after the parent course is unpublished');
+SELECT extensions.is(
+  (SELECT pg_catalog.count(*)::integer FROM public.assessment_attempts
+   WHERE user_id = auth.uid()),
+  0, 'STUDENT cannot read attempts after the parent course is unpublished');
+SELECT extensions.throws_ok(
+  $$INSERT INTO public.assessment_attempts (assessment_id, user_id, answers)
+    VALUES (pg_catalog.current_setting('test.published_choice_assessment_id')::uuid,
+            auth.uid(), '{"q1":"o1"}'::jsonb)$$,
+  '42501', NULL,
+  'STUDENT cannot submit directly after the parent course is unpublished');
 RESET ROLE;
 
 -- Temporarily make the helper return TRUE to demonstrate that the RPC's own

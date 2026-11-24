@@ -136,6 +136,27 @@ test('assessment definitions and answer keys are saved atomically', async () => 
   assert.match(pgTap, /RPC explicit type guard rejects unsupported types/);
 });
 
+test('database validates direct student answers and gates unpublished parent courses', async () => {
+  const migration = await source('supabase/migrations/20261124000100_student_assessment_security.sql');
+  const pgTap = await source('supabase/tests/20261123000200_atomic_assessment_writes.test.sql');
+  const triggerFunction = migration.slice(
+    migration.indexOf('CREATE FUNCTION app_private.validate_student_assessment_attempt'),
+    migration.indexOf('$function$;', migration.indexOf('CREATE FUNCTION app_private.validate_student_assessment_attempt')),
+  );
+
+  assert.match(migration, /CREATE TRIGGER assessment_attempt_validate_answers\s+BEFORE INSERT ON public\.assessment_attempts/);
+  assert.match(triggerFunction, /SECURITY INVOKER/);
+  assert.match(triggerFunction, /jsonb_object_keys\(NEW\.answers\)/);
+  assert.match(triggerFunction, /jsonb_typeof\(NEW\.answers->v_question_id\) IS DISTINCT FROM 'string'/);
+  assert.match(triggerFunction, /option\.value->>'id' = v_answer/);
+  assert.doesNotMatch(triggerFunction, /assessment_answer_keys/);
+  assert.match(migration, /c\.status = 'published'::public\.course_status/);
+  assert.match(pgTap, /direct Data API insert rejects answer keys that do not match question identifiers/);
+  assert.match(pgTap, /direct Data API insert rejects a single-choice answer that is not an option identifier/);
+  assert.match(pgTap, /STUDENT cannot read assessments after the parent course is unpublished/);
+  assert.match(pgTap, /STUDENT cannot submit directly after the parent course is unpublished/);
+});
+
 test('assessment admin routes distinguish lookup and delete failures from missing rows', async () => {
   const createRoute = await source('app/api/admin/assessments/route.ts');
   const updateRoute = await source('app/api/admin/assessments/[assessmentId]/route.ts');

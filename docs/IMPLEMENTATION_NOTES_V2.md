@@ -19,7 +19,7 @@
 
 - Les questions publiques n’acceptent qu’un schéma limité de champs. La migration ajoute une contrainte de forme pour rejeter les champs de réponse attendue.
 - Les clés de correction sont dans `assessment_answer_keys`, séparées des questions publiées, avec politiques et accès OWNER/ADMIN uniquement.
-- L’API étudiante valide l’inscription, la publication, l’identité STUDENT et les identifiants de réponses; elle n’accepte ni score ni feedback à l’insertion.
+- L’API étudiante valide l’inscription, la publication, l’identité STUDENT et les identifiants de réponses; une migration SQL valide aussi les écritures directes et exige un cours parent publié. L’API n’accepte ni score ni feedback à l’insertion.
 - Le score et le feedback sont modifiables uniquement par le flux staff protégé. Aucune notation automatique n’est implémentée.
 
 ## Vérifications et limites restantes
@@ -29,4 +29,4 @@
 - L’envoi des invitations dépend de la configuration SMTP/provider du projet. Une confirmation e-mail déjà effectuée empêche le renvoi.
 - La liste de profils est limitée aux 100 profils les plus récents; aucune pagination ni analyse de progression agrégée n’est fournie.
 - Les évaluations sont sans notation automatique; les réponses doivent être examinées et notées par un OWNER/ADMIN.
-- Ordre des migrations : Foundation V1, Authentication V1, puis `20261123000100_learning_experience_v1.sql` après examen et validation isolée.
+- Ordre des migrations : Foundation V1, Authentication V1, Learning Experience V1, Atomic Assessment Writes V2, puis `20261124000100_student_assessment_security.sql`, après examen et validation isolée.
