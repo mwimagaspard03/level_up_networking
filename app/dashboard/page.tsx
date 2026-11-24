@@ -62,6 +62,7 @@ export default async function DashboardPage() {
           </div>
           <Link className="button button--primary" href="/courses">Voir le catalogue</Link>
         </section>
+        {profile.role !== 'STUDENT' && <section className="dashboard-panel" aria-labelledby="dashboard-management-title"><div><p className="eyebrow">ADMINISTRATION</p><h2 id="dashboard-management-title">Centre de gestion</h2><p>Gérez les membres et les formations selon vos autorisations.</p></div><Link className="button button--primary" href="/dashboard/management">Ouvrir la gestion</Link></section>}
         <section className="dashboard-panel" aria-labelledby="dashboard-security-title">
           <div>
             <p className="eyebrow">VOTRE COMPTE</p>
@@ -70,7 +71,7 @@ export default async function DashboardPage() {
           </div>
           <Link className="button button--secondary" href="/account/security">Changer mon mot de passe</Link>
         </section>
-        <p className="dashboard-footnote">Les outils avancés par rôle seront ajoutés dans les prochains lots.</p>
+        {profile.role === 'STUDENT' && <section className="dashboard-panel"><div><p className="eyebrow">APPRENTISSAGE</p><h2>Mes inscriptions</h2><p>Retrouvez les cours auxquels vous êtes inscrit.</p></div><Link className="button button--primary" href="/dashboard/learning">Mon apprentissage</Link></section>}
       </Container>
     </main>
   );

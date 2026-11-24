@@ -5,10 +5,22 @@ import { safeInternalPath } from './redirect';
 
 export function hasSameOrigin(request: NextRequest): boolean {
   const origin = request.headers.get('origin');
-  if (!origin) return false;
+  const expectedOrigin = new URL(request.url).origin;
+  if (origin !== null) {
+    try {
+      return new URL(origin).origin === expectedOrigin;
+    } catch {
+      return false;
+    }
+  }
 
+  if (request.method !== 'GET' && request.method !== 'HEAD') return false;
+  const fetchSite = request.headers.get('sec-fetch-site');
+  if (fetchSite !== null) return fetchSite === 'same-origin';
+  const referer = request.headers.get('referer');
+  if (referer === null) return false;
   try {
-    return new URL(origin).origin === new URL(request.url).origin;
+    return new URL(referer).origin === expectedOrigin;
   } catch {
     return false;
   }
