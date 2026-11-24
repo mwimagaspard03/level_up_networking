@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { assessmentRpcErrorStatus } from '../src/lib/assessments/rpc-error.ts';
 import {
   parseAssessmentDefinition,
   parsePublicAssessmentQuestions,
@@ -21,6 +22,20 @@ const questions = [
 ];
 
 const answerKey = { q1: 'o2', q2: 'Achemine les paquets entre réseaux.' };
+
+test('assessment RPC SQLSTATE mapping separates client and internal errors', () => {
+  assert.equal(assessmentRpcErrorStatus('22023'), 400);
+  assert.equal(assessmentRpcErrorStatus('22P02'), 400);
+  assert.equal(assessmentRpcErrorStatus('23514'), 400);
+  assert.equal(assessmentRpcErrorStatus('42501'), 403);
+  assert.equal(assessmentRpcErrorStatus('P0002'), 404);
+  assert.equal(assessmentRpcErrorStatus('23505'), 409);
+  assert.equal(assessmentRpcErrorStatus('22012'), 500);
+  assert.equal(assessmentRpcErrorStatus('22P03'), 500);
+  assert.equal(assessmentRpcErrorStatus('23504'), 500);
+  assert.equal(assessmentRpcErrorStatus('XX000'), 500);
+  assert.equal(assessmentRpcErrorStatus(), 500);
+});
 
 test('assessment definitions separate public questions from expected answers', () => {
   const definition = parseAssessmentDefinition(questions, answerKey);
@@ -96,4 +111,44 @@ test('catalog and management interfaces reach course, lesson and assessment work
   assert.match(lessons, /sort_order/);
   assert.match(assessmentManager, /Correction enregistrée manuellement/);
   assert.match(assessmentManager, /answer_key: answerKey/);
+});
+
+test('assessment definitions and answer keys are saved atomically', async () => {
+  const createRoute = await source('app/api/admin/assessments/route.ts');
+  const updateRoute = await source('app/api/admin/assessments/[assessmentId]/route.ts');
+  const migration = await source('supabase/migrations/20261123000200_atomic_assessment_writes.sql');
+  const pgTap = await source('supabase/tests/20261123000200_atomic_assessment_writes.test.sql');
+  const createPost = createRoute.slice(createRoute.indexOf('export async function POST'));
+
+  assert.match(createRoute, /rpc\(['"]save_assessment_definition['"]/);
+  assert.match(updateRoute, /rpc\(['"]save_assessment_definition['"]/);
+  assert.doesNotMatch(createPost, /from\(['"]assessment_answer_keys['"]\)/);
+  assert.doesNotMatch(updateRoute, /from\(['"]assessment_answer_keys['"]\)/);
+  assert.match(migration, /SECURITY INVOKER/);
+  assert.match(migration, /app_private\.current_actor_role\(\)/);
+  assert.match(migration, /DEFERRABLE INITIALLY DEFERRED/);
+  assert.match(migration, /FOREIGN KEY \(course_id, lesson_id\)/);
+  assert.match(migration, /length\(p_instructions\) > 2000/);
+  assert.match(migration, /ON CONFLICT \(assessment_id\) DO UPDATE/);
+  assert.match(pgTap, /OWNER can create an assessment and its answer key/);
+  assert.match(pgTap, /assessment update rolls back when answer-key write fails/);
+  assert.match(pgTap, /failed creation leaves no assessment row/);
+  assert.match(pgTap, /RPC explicit type guard rejects unsupported types/);
+});
+
+test('assessment admin routes distinguish lookup and delete failures from missing rows', async () => {
+  const createRoute = await source('app/api/admin/assessments/route.ts');
+  const updateRoute = await source('app/api/admin/assessments/[assessmentId]/route.ts');
+  const deleteRoute = updateRoute.slice(updateRoute.indexOf('export async function DELETE'));
+
+  for (const route of [createRoute, updateRoute]) {
+    assert.match(route, /data: course, error: courseError/);
+    assert.match(route, /if \(courseError\)[\s\S]*?courseError\.code === '42501' \? 403 : 500[\s\S]*?if \(!course\)/);
+    assert.match(route, /data: lesson, error: lessonError/);
+    assert.match(route, /if \(lessonError\)[\s\S]*?lessonError\.code === '42501' \? 403 : 500[\s\S]*?if \(!lesson\)/);
+  }
+
+  assert.match(deleteRoute, /\.delete\(\)[\s\S]*?\.eq\('id', assessmentId\)[\s\S]*?\.select\('id'\)\s*\.maybeSingle\(\)/);
+  assert.match(deleteRoute, /if \(error\)[\s\S]*?error\.code === '42501' \? 403 : 500/);
+  assert.match(deleteRoute, /if \(!deletedAssessment\)[\s\S]*?status: 404/);
 });

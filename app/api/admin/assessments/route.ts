@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRequestIdentity } from '@/src/lib/auth/server';
 import { hasSameOrigin, isValidUuid, readJsonObject } from '@/src/lib/auth/request';
+import { assessmentRpcErrorStatus } from '@/src/lib/assessments/rpc-error';
 import { parseAssessmentDefinition } from '@/src/lib/assessments/validation';
 
 const privateHeaders = { 'Cache-Control': 'private, no-store' };
@@ -49,35 +50,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Vérifiez les questions et la clé de correction.' }, { status: 400 });
   }
 
-  const { data: course } = await client.from('courses').select('id').eq('id', body.course_id).maybeSingle();
+  const { data: course, error: courseError } = await client.from('courses').select('id').eq('id', body.course_id).maybeSingle();
+  if (courseError) {
+    const status = courseError.code === '42501' ? 403 : 500;
+    return NextResponse.json({ error: 'Vérification du cours impossible.' }, { status, headers: privateHeaders });
+  }
   if (!course) return NextResponse.json({ error: 'Cours introuvable.' }, { status: 404 });
   if (lessonId) {
-    const { data: lesson } = await client.from('lessons').select('id').eq('id', lessonId).eq('course_id', body.course_id).maybeSingle();
+    const { data: lesson, error: lessonError } = await client.from('lessons').select('id').eq('id', lessonId).eq('course_id', body.course_id).maybeSingle();
+    if (lessonError) {
+      const status = lessonError.code === '42501' ? 403 : 500;
+      return NextResponse.json({ error: 'Vérification de la leçon impossible.' }, { status, headers: privateHeaders });
+    }
     if (!lesson) return NextResponse.json({ error: 'Leçon invalide pour ce cours.' }, { status: 400 });
   }
 
-  const { data: assessment, error } = await client
-    .from('assessments')
-    .insert({
-      course_id: body.course_id,
-      lesson_id: lessonId,
-      title,
-      instructions: body.instructions.trim(),
-      questions: definition.questions,
-      status: 'draft',
-      created_by: profile.id,
-    })
-    .select('id')
-    .single();
-  if (error || !assessment) return NextResponse.json({ error: 'Création impossible.' }, { status: 400 });
-
-  const { error: keyError } = await client.from('assessment_answer_keys').insert({
-    assessment_id: assessment.id,
-    answers: definition.answerKey,
+  const { data: assessmentId, error } = await client.rpc('save_assessment_definition', {
+    p_assessment_id: null,
+    p_course_id: body.course_id,
+    p_lesson_id: lessonId,
+    p_title: title,
+    p_instructions: body.instructions.trim(),
+    p_questions: definition.questions,
+    p_status: 'draft',
+    p_answers: definition.answerKey,
   });
-  if (keyError) {
-    await client.from('assessments').delete().eq('id', assessment.id);
-    return NextResponse.json({ error: 'La clé privée n’a pas pu être enregistrée.' }, { status: 500, headers: privateHeaders });
+  if (error || !assessmentId) {
+    const status = error ? assessmentRpcErrorStatus(error.code) : 500;
+    return NextResponse.json({ error: 'Création impossible.' }, { status, headers: privateHeaders });
   }
-  return NextResponse.json({ id: assessment.id }, { status: 201, headers: privateHeaders });
+  return NextResponse.json({ id: assessmentId }, { status: 201, headers: privateHeaders });
 }

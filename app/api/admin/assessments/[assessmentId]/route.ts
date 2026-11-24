@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRequestIdentity } from '@/src/lib/auth/server';
 import { hasSameOrigin, isValidUuid, readJsonObject } from '@/src/lib/auth/request';
+import { assessmentRpcErrorStatus } from '@/src/lib/assessments/rpc-error';
 import { parseAssessmentDefinition } from '@/src/lib/assessments/validation';
 
 const privateHeaders = { 'Cache-Control': 'private, no-store' };
@@ -25,28 +26,37 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: 'Vérifiez les champs de l’évaluation.' }, { status: 400 });
   }
 
-  const { data: course } = await client.from('courses').select('id').eq('id', body.course_id).maybeSingle();
+  const { data: course, error: courseError } = await client.from('courses').select('id').eq('id', body.course_id).maybeSingle();
+  if (courseError) {
+    const status = courseError.code === '42501' ? 403 : 500;
+    return NextResponse.json({ error: 'Vérification du cours impossible.' }, { status, headers: privateHeaders });
+  }
   if (!course) return NextResponse.json({ error: 'Cours introuvable.' }, { status: 404 });
   if (lessonId) {
-    const { data: lesson } = await client.from('lessons').select('id').eq('id', lessonId).eq('course_id', body.course_id).maybeSingle();
+    const { data: lesson, error: lessonError } = await client.from('lessons').select('id').eq('id', lessonId).eq('course_id', body.course_id).maybeSingle();
+    if (lessonError) {
+      const status = lessonError.code === '42501' ? 403 : 500;
+      return NextResponse.json({ error: 'Vérification de la leçon impossible.' }, { status, headers: privateHeaders });
+    }
     if (!lesson) return NextResponse.json({ error: 'Leçon invalide pour ce cours.' }, { status: 400 });
   }
 
-  const { error } = await client.from('assessments').update({
-    course_id: body.course_id,
-    lesson_id: lessonId,
-    title: body.title.trim(),
-    instructions: body.instructions.trim(),
-    questions: definition.questions,
-    status: body.status,
-  }).eq('id', assessmentId);
-  if (error) return NextResponse.json({ error: 'Modification impossible.' }, { status: 400 });
-  const { error: keyError } = await client.from('assessment_answer_keys').upsert({
-    assessment_id: assessmentId,
-    answers: definition.answerKey,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'assessment_id' });
-  if (keyError) return NextResponse.json({ error: 'La clé privée n’a pas pu être mise à jour.' }, { status: 500, headers: privateHeaders });
+  const { error } = await client.rpc('save_assessment_definition', {
+    p_assessment_id: assessmentId,
+    p_course_id: body.course_id,
+    p_lesson_id: lessonId,
+    p_title: body.title.trim(),
+    p_instructions: body.instructions.trim(),
+    p_questions: definition.questions,
+    p_status: body.status,
+    p_answers: definition.answerKey,
+  });
+  if (error) {
+    return NextResponse.json(
+      { error: 'Modification impossible.' },
+      { status: assessmentRpcErrorStatus(error.code), headers: privateHeaders },
+    );
+  }
   return NextResponse.json({ ok: true }, { headers: privateHeaders });
 }
 
@@ -56,7 +66,16 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
   if (!isValidUuid(assessmentId)) return NextResponse.json({ error: 'Identifiant invalide.' }, { status: 400 });
   const { client, profile } = await getRequestIdentity();
   if (!profile || !isStaff(profile.role)) return NextResponse.json({ error: 'Accès refusé.' }, { status: 403 });
-  const { error } = await client.from('assessments').delete().eq('id', assessmentId);
-  if (error) return NextResponse.json({ error: 'Suppression impossible.' }, { status: 400 });
+  const { data: deletedAssessment, error } = await client
+    .from('assessments')
+    .delete()
+    .eq('id', assessmentId)
+    .select('id')
+    .maybeSingle();
+  if (error) {
+    const status = error.code === '42501' ? 403 : 500;
+    return NextResponse.json({ error: 'Suppression impossible.' }, { status, headers: privateHeaders });
+  }
+  if (!deletedAssessment) return NextResponse.json({ error: 'Évaluation introuvable.' }, { status: 404, headers: privateHeaders });
   return NextResponse.json({ ok: true }, { headers: privateHeaders });
 }
